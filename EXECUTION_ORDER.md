@@ -25,34 +25,9 @@
    ollama pull qwen3:1.7b
    ```
 
-### 阶段二：数据准备（选择以下方式之一）
+### 阶段二：数据准备
 
-#### 方式A：使用已有的CSV数据（推荐）
-
-**步骤1：导入CSV数据到Neo4j**
-```bash
-cd data
-python 02_import_to_neo4j.py
-```
-
-#### 方式B：从文本抽取构建知识图谱（可选）
-
-**步骤1：运行文本抽取**
-```bash
-# 方式1：交互式模式
-python 01_extract_text_to_kg.py -i
-
-# 方式2：处理文件
-python 01_extract_text_to_kg.py -f <文件路径>
-
-# 方式3：直接处理文本
-python 01_extract_text_to_kg.py "文本内容"
-```
-
-**步骤2：将抽取结果转换为CSV格式**
-（需要手动或编写脚本将抽取结果转换为CSV）
-
-**步骤3：导入到Neo4j**
+**导入CSV数据到Neo4j**
 ```bash
 cd data
 python 02_import_to_neo4j.py

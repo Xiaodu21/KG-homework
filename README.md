@@ -57,12 +57,6 @@ KG-homework/
 │   ├── relation.csv         # 关系三元组数据
 │   └── 02_import_to_neo4j.py # 数据导入脚本
 │
-├── 01_extract_text_to_kg.py  # 文本信息抽取主程序（可选）
-├── extraction_config.py      # 文本抽取配置文件（可选）
-├── ner_extractor.py          # 命名实体识别模块（可选）
-├── relation_extractor.py     # 关系抽取模块（可选）
-├── extraction_utils.py       # 抽取工具函数（可选）
-├── test_extraction.py        # 文本抽取测试脚本（可选）
 ├── EXECUTION_ORDER.md        # 执行顺序详细指南
 └── README.md                 # 本文档
 ```
