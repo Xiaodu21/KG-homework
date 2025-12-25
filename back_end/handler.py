@@ -18,7 +18,7 @@ queries = [
   "MATCH (a:作品{name:$val})-[:歌手]->(b:人物) RETURN b.name AS name LIMIT 1",
   "MATCH (a:专辑{name:$val})<-[:所属专辑]-(b:作品) RETURN b.name AS name",
   "MATCH (a:人物{name:$val})<-[:歌手]-(b:作品) RETURN b.name AS name LIMIT 10",
-  "MATCH (a:人物{name:$val})<-[:作词]->(b:作品) RETURN b.name AS name LIMIT 10",
+  "MATCH (a:人物{name:$val})<-[:作词]-(b:作品) RETURN b.name AS name LIMIT 10",
   "MATCH (a:人物{name:$val})-[:合作]->(b:人物) RETURN b.name AS name LIMIT 10"
 ]
 

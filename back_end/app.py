@@ -16,15 +16,27 @@ def index():
 
 @app.route('/query_v2', methods=['POST'])
 def query_v2():
-    question = request.get_json()["question"]
-    result = two_stage_qa(question)
-    return jsonify(result)
+    try:
+        data = request.get_json()
+        if not data or 'question' not in data:
+            return jsonify({"state": 1, "msg": "缺少question参数"}), 400
+        question = data["question"]
+        result = two_stage_qa(question)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"state": 1, "msg": f"处理出错: {str(e)}"}), 500
 
 
 @app.route('/query', methods=['POST'])
 def query():
-    question = request.get_json()["question"]
-    return query_handler(question)
+    try:
+        data = request.get_json()
+        if not data or 'question' not in data:
+            return jsonify({"state": 1, "msg": "缺少question参数"}), 400
+        question = data["question"]
+        return query_handler(question)
+    except Exception as e:
+        return jsonify({"state": 1, "msg": f"处理出错: {str(e)}"}), 500
 
 
 if __name__ == "__main__":

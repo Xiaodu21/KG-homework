@@ -3,7 +3,7 @@
 """
 import re
 from typing import List, Dict, Tuple
-from config import RELATION_TYPES
+from extraction_config import RELATION_TYPES
 
 
 class REModule:

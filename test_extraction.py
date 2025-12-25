@@ -1,8 +1,8 @@
 """
-简单的测试示例
+简单的测试示例 - 文本抽取功能测试
 """
-from ner_module import NERModule
-from re_module import REModule
+from ner_extractor import NERModule
+from relation_extractor import REModule
 
 def test_basic():
     """基本功能测试"""

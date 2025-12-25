@@ -1,10 +1,10 @@
 """
-工具函数
+工具函数 - 文本抽取模块
 """
 import json
 import os
 from typing import List, Dict, Any
-from config import OUTPUT_DIR
+from extraction_config import OUTPUT_DIR
 
 
 def save_results(results: Dict[str, Any], filename: str = "results.json"):

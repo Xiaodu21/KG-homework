@@ -5,7 +5,7 @@ import re
 from typing import List, Dict, Tuple
 from transformers import AutoTokenizer, AutoModelForTokenClassification
 import torch
-from config import NER_MODEL_NAME, ENTITY_TYPES
+from extraction_config import NER_MODEL_NAME, ENTITY_TYPES
 
 
 class NERModule:
