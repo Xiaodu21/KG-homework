@@ -6,7 +6,7 @@ from neo4j import GraphDatabase
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # 定义 data 目录路径
-DATA_DIR = os.path.join(SCRIPT_DIR, 'data')
+DATA_DIR = os.path.join(SCRIPT_DIR)
 
 # 构造所有 CSV 文件的完整路径
 ALBUM_FILE = os.path.join(DATA_DIR, '专辑.csv')
@@ -15,9 +15,10 @@ PERSON_FILE = os.path.join(DATA_DIR, '人物.csv')
 RELATION_FILE = os.path.join(DATA_DIR, 'relation.csv')
 
 # Neo4j 连接配置
-NEO4J_URI = "bolt://localhost:7687"
-NEO4J_USER = "neo4j"
-NEO4J_PASSWORD = "Aqweasd123."
+import os
+NEO4J_URI = os.getenv('NEO4J_URI', "bolt://localhost:7687")
+NEO4J_USER = os.getenv('NEO4J_USER', "neo4j")
+NEO4J_PASSWORD = os.getenv('NEO4J_PASSWORD', "Aqweasd123.")
 driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
 
 
@@ -55,7 +56,7 @@ def load_nodes():
         session.write_transaction(create_constraints)
 
         # 加载 专辑
-        with open('专辑.csv', 'r', encoding='utf-8') as f:
+        with open(ALBUM_FILE, 'r', encoding='utf-8') as f:
             reader = csv.DictReader(f)
             for row in reader:
                 name = row['专辑名称']
@@ -63,7 +64,7 @@ def load_nodes():
                     session.run("MERGE (:专辑 {name: $name})", name=name)
 
         # 加载 音乐作品
-        with open('音乐作品.csv', 'r', encoding='utf-8') as f:
+        with open(MUSIC_FILE, 'r', encoding='utf-8') as f:
             reader = csv.DictReader(f)
             for row in reader:
                 name = row['所有音乐作品']
@@ -71,7 +72,7 @@ def load_nodes():
                     session.run("MERGE (:作品 {name: $name})", name=name)
 
         # 加载 人物
-        with open('人物.csv', 'r', encoding='utf-8') as f:
+        with open(PERSON_FILE, 'r', encoding='utf-8') as f:
             reader = csv.DictReader(f)
             for row in reader:
                 name = row['人物列表']
@@ -81,7 +82,7 @@ def load_nodes():
 
 def load_relations():
     with driver.session() as session:
-        with open('relation.csv', 'r', encoding='utf-8') as f:
+        with open(RELATION_FILE, 'r', encoding='utf-8') as f:
             reader = csv.DictReader(f)
             for row in reader:
                 try:
@@ -126,3 +127,4 @@ if __name__ == "__main__":
     load_relations()
     print("✅ 数据导入完成！")
     driver.close()
+

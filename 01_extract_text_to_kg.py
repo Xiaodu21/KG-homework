@@ -2,10 +2,10 @@
 主程序 - 文本信息抽取与构建系统
 """
 import os
-from ner_module import NERModule
-from re_module import REModule
-from utils import save_results, format_entities, format_relations, visualize_knowledge_graph
-from config import EXAMPLES_DIR
+from ner_extractor import NERModule
+from relation_extractor import REModule
+from extraction_utils import save_results, format_entities, format_relations, visualize_knowledge_graph
+from extraction_config import EXAMPLES_DIR
 
 
 def process_text(text: str, save_output: bool = True):
@@ -157,9 +157,9 @@ def main():
             process_text(text, save_output=(i == 1))
         
         print("\n提示:")
-        print("  - 使用 'python main.py -i' 进入交互模式")
-        print("  - 使用 'python main.py -f <文件路径>' 处理文件")
-        print("  - 使用 'python main.py <文本>' 直接处理文本")
+        print("  - 使用 'python 01_extract_text_to_kg.py -i' 进入交互模式")
+        print("  - 使用 'python 01_extract_text_to_kg.py -f <文件路径>' 处理文件")
+        print("  - 使用 'python 01_extract_text_to_kg.py <文本>' 直接处理文本")
 
 
 if __name__ == "__main__":
