@@ -12,7 +12,7 @@ def two_stage_qa(question: str):
     """
     # === 第一阶段：LLM 生成 ===
     llm_ans = call_llm(question)
-    print(f"【第一阶段】已接入千问3 1.7B，大模型的回答是：{llm_ans}")
+    print(f"【第一阶段】已接入千问2.5 1.5b，大模型的回答是：{llm_ans}")
 
     # === 第二阶段：尝试用 KG 验证 ===
     kg_res = query_handler(question)

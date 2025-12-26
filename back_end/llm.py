@@ -13,7 +13,7 @@ def call_llm(question: str) -> str:
     try:
         # 使用 ollama run 直接调用（绕过 HTTP API）
         result = subprocess.run(
-            ["ollama", "run", "qwen3:1.7b", prompt],
+            ["ollama", "run", "qwen2.5:1.5b", prompt],
             capture_output=True,
             text=True,
             timeout=90,

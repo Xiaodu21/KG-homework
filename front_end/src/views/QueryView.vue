@@ -59,17 +59,15 @@ export default {
   },
   methods: {
     async sendQuery() {
-      const { data: res } = await this.$http.post('/api/query', {
+      const { data: res } = await this.$http.post('/api/query_v2', {
         question: this.query.trim()
       })
-      this.queryResult = res.msg
-      if (res.state === 0) {
-        res.data.forEach((item, index) => {
-          index === 0 ? (this.queryResult += '：' + item) : (this.queryResult += '、' + item)
-        })
+      if (res && res.final_answer) {
+        this.queryResult = res.final_answer
         this.color = 'green'
         return
       }
+      this.queryResult = (res && res.msg) ? res.msg : '????'
       this.color = 'red'
     },
     toQuery() {
