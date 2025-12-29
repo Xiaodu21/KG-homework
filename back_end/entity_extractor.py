@@ -128,18 +128,22 @@ def extract_triples_from_llm_answer(llm_answer: str, question: str = "") -> List
     extractor = get_entity_extractor()
 
     # === 第一步：尝试用 LLM 抽取（主路径）===
-    extraction_prompt = f"""Task: Extract entities and relations from the text below.
-Relations allowed: 歌手 (singer), 作词 (lyricist), 作曲 (composer).
+    extraction_prompt = f"""Task: Extract singer, lyricist, composer relations.
+Relations: 歌手, 作词, 作曲.
 Output format: Entity1 | Relation | Entity2
-Only output the triples. Do not add any explanation.
 
-Example:
-Input: 《七里香》由周杰伦演唱，方文山作词。
+Example 1:
+Text: 《青花瓷》由周杰伦演唱，方文山作词。
+Output:
+青花瓷 | 歌手 | 周杰伦
+青花瓷 | 作词 | 方文山
+
+Example 2:
+Text: 七里香是周杰伦唱的。
 Output:
 七里香 | 歌手 | 周杰伦
-七里香 | 作词 | 方文山
 
-Input:
+Text:
 {llm_answer}
 
 Output:
@@ -266,7 +270,10 @@ def _fallback_regex_extraction(text: str, extractor: MusicEntityExtractor) -> Li
     else:
         # 否则用保守正则（只取2~5字中文，且不在黑名单）
         raw_candidates = re.findall(r'[\u4e00-\u9fa5]{2,5}', text)
-        blacklist = {"作词人", "作曲人", "演唱者", "是谁", "答案", "歌曲", "专辑", "人是", "可能是", "不确定"}
+        blacklist = {
+            "作词人", "作曲人", "演唱者", "是谁", "答案", "歌曲", "专辑", 
+            "人是", "可能是", "不确定", "人是谁", "有没有", "是不是"
+        }
         candidate_tails = [c for c in raw_candidates if c not in blacklist]
     if not candidate_tails:
         return []
