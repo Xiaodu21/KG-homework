@@ -128,32 +128,41 @@ def extract_triples_from_llm_answer(llm_answer: str, question: str = "") -> List
     extractor = get_entity_extractor()
 
     # === 第一步：尝试用 LLM 抽取（主路径）===
-    extraction_prompt = f"""任务：从文本中提取音乐领域的三元组。
-关系类型仅限：歌手、作词、作曲。
+    extraction_prompt = f"""任务：从文本中提取音乐三元组。
+要求：
+1. 忽略文本中的所有思考过程（如“我记得...”、“可能...”）。
+2. 只关注最终确定的事实。
+3. 关系仅限：歌手、作词、作曲。
+4. 每行输出一个三元组，格式：实体1 | 关系 | 实体2
+5. 严禁输出任何其他文字。
 
-格式要求：每行一个三元组，格式为 "实体1 | 关系 | 实体2"。不要输出任何其他内容。
+待提取文本：
+{llm_answer}
 
-示例：
-文本：《青花瓷》由周杰伦演唱，方文山作词。
-输出：
-青花瓷 | 歌手 | 周杰伦
-青花瓷 | 作词 | 方文山
-
-文本：{llm_answer}
 输出：
 """
 
     raw_output = _call_llm_for_extraction(extraction_prompt)
     triples = []
     
-    # 解析 Line-based output
-    for line in raw_output.split('\n'):
+    # 增强解析：处理可能的前缀/思维链残留
+    lines = raw_output.split('\n')
+    for line in lines:
+        line = line.strip()
+        # 跳过明显的非三元组行
+        if not line or " | " not in line or line.startswith("Thinking") or "..." in line:
+            continue
+            
         parts = [p.strip() for p in line.split('|')]
-        if len(parts) == 3:
-            h, r, t = parts
-            # 清理书名号
-            h = h.replace("《", "").replace("》", "")
-            t = t.replace("《", "").replace("》", "")
+        if len(parts) >= 3: # 允许 loose parsing
+            h = parts[0]
+            r = parts[1]
+            t = parts[2]
+            
+            # 清理书名号和常见标点
+            h = re.sub(r'[《》]', '', h)
+            t = re.sub(r'[《》]', '', t)
+            
             if r in {"歌手", "作词", "作曲"}:
                 triples.append((h, r, t))
     
