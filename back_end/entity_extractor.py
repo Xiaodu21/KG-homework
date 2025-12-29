@@ -1,12 +1,10 @@
 # coding=utf-8
 """
-实体抽取模块 - 专门用于从LLM回答中提取音乐相关实体（歌曲、专辑、人物）
-通过查询知识图谱获取已知实体列表，然后在文本中匹配
+实体抽取模块 - 专门用于从LLM回答中提取音乐相关三元组 (head, relation, tail)
+通过查询知识图谱获取已知实体列表，并结合规则与大模型进行混合抽取。
 
-新增功能：
-- 基于大模型的 NER + 关系抽取（主路径）
-- 关系关键词映射 + 实体匹配（fallback 路径）
-- 输出结构化三元组 [(head, relation, tail)]
+核心目标：准确抽取出如 ("七里香", "歌手", "周杰伦") 的结构化事实，
+以便与KG比对，检测幻觉。
 """
 from db import get_db, close_db
 import re
@@ -16,18 +14,31 @@ import json
 from typing import List, Dict, Tuple
 
 
+# ==============================================================================
+# 🧠 类：MusicEntityExtractor —— 音乐领域实体词典加载与匹配器
+# 作用：从 Neo4j 知识图谱中一次性加载所有已知实体（歌曲/专辑/人物），
+#       并提供基于最大匹配（longest-first）的实体识别方法。
+# 设计理念：避免抽取“不存在”的幻觉实体，只信任 KG 中的真实名字。
+# ==============================================================================
 class MusicEntityExtractor:
     """音乐领域实体抽取器"""
 
     def __init__(self):
-        """初始化实体抽取器，从KG加载实体列表"""
-        self.songs = set()  # 歌曲/作品名
-        self.albums = set()  # 专辑名
-        self.persons = set()  # 人物名
+        """
+        初始化实体抽取器，从KG加载实体列表。
+        加载三类实体：作品（歌曲）、专辑、人物。
+        """
+        self.songs = set()  # 存储所有歌曲名（来自 :作品 节点）
+        self.albums = set()  # 存储所有专辑名（来自 :专辑 节点）
+        self.persons = set()  # 存储所有人物名（来自 :人物 节点）
         self._load_entities_from_kg()
 
     def _load_entities_from_kg(self):
-        """从知识图谱加载所有实体"""
+        """
+        【私有方法】从 Neo4j 知识图谱中加载全部实体。
+        执行三条 Cypher 查询，分别获取作品、专辑、人物的 name 属性。
+        若连接失败，则清空集合，避免后续崩溃。
+        """
         try:
             db = get_db()
             try:
@@ -52,7 +63,14 @@ class MusicEntityExtractor:
             self.persons = set()
 
     def extract_entities(self, text: str) -> Dict[str, List[str]]:
-        """从文本中提取音乐相关实体（保持原逻辑不变）"""
+        """
+        【核心方法】基于词典的最大匹配实体抽取（Dictionary-based NER）。
+        输入：任意文本（如 LLM 的回答）
+        输出：按类型分类的实体列表 {"songs": [...], "albums": [...], "persons": [...]}
+        策略：
+          - 按实体长度降序排序，优先匹配长串（防“青花瓷”被拆成“花瓷”）
+          - 记录匹配位置，防止重叠（如“周杰伦”和“杰伦”）
+        """
         entities = {"songs": [], "albums": [], "persons": []}
         all_entities = {
             "songs": sorted(self.songs, key=len, reverse=True),
@@ -75,17 +93,24 @@ class MusicEntityExtractor:
                     if not is_overlapped:
                         found_entities.append(entity)
                         matched_positions.add((start, end))
-                        break
+                        break  # 每个匹配位置只取一次
             entities[entity_type] = list(set(found_entities))
         return entities
 
     def extract_all_entities(self, text: str) -> List[str]:
-        """提取所有实体（不分类）"""
+        """
+        【辅助方法】提取文本中所有类型的实体（不分类，去重）。
+        用途：快速获取所有提及的 KG 实体。
+        """
         entities_dict = self.extract_entities(text)
         return list(set(entities_dict["songs"] + entities_dict["albums"] + entities_dict["persons"]))
 
 
-# ========== 新增：关系关键词映射==========
+# ==============================================================================
+# 🔑 全局常量：RELATION_KEYWORDS —— 关系关键词映射表
+# 作用：为 fallback 规则路径提供关系触发词。
+# 格式：{关系类型: [关键词正则或字符串列表]}
+# ==============================================================================
 RELATION_KEYWORDS = {
     "歌手": ["演唱", "唱", "主唱", "由.*?演唱", "演唱者", "谁唱"],
     "作词": ["作词", "填词", "词作者", "歌词由", "作词人", "谁写的词"],
@@ -93,7 +118,13 @@ RELATION_KEYWORDS = {
 }
 
 
-# ========== 新增：调用 LLM 进行信息抽取 ==========
+# ==============================================================================
+# 🤖 函数：_call_llm_for_extraction —— 调用 LLM 执行结构化信息抽取
+# 作用：通过 Ollama 调用本地 LLM（如 qwen:7b），传入 Prompt，要求其输出 JSON。
+# 输入：Prompt 字符串
+# 输出：LLM 返回的第一行非空文本（已清理 Thinking... 日志）
+# 注意：这是“让 LLM 自己做 NER+RE”的核心调用点。
+# ==============================================================================
 def _call_llm_for_extraction(prompt: str) -> str:
     """内部函数：调用 LLM 执行抽取"""
     try:
@@ -114,14 +145,17 @@ def _call_llm_for_extraction(prompt: str) -> str:
         return ""
 
 
-# ========== 【增强版】主三元组抽取函数 ==========
+# ==============================================================================
+# 🧩 函数：extract_triples_from_llm_answer —— 主三元组抽取入口
+# 作用：从 LLM 的自然语言回答中，抽取出结构化三元组 [(head, relation, tail)]。
+# 策略（混合式）：
+#   1️⃣ 主路径：让 LLM 输出 JSON（端到端 NER+RE）
+#   2️⃣ 轻量规则：处理“方文山”这类短答案
+#   3️⃣ Fallback：关键词 + 实体匹配（兜底）
+# 输入：llm_answer（LLM 回答文本），question（原始问题，用于上下文）
+# 输出：三元组列表，如 [("青花瓷", "作词", "方文山")]
+# ==============================================================================
 def extract_triples_from_llm_answer(llm_answer: str, question: str = "") -> List[Tuple[str, str, str]]:
-    """
-    从 LLM 回答中抽取三元组，使用混合策略：
-    1. 主路径：调用 LLM 做 NER+RE
-    2. 备用路径：使用 RELATION_KEYWORDS + KG 实体匹配
-    3. 【新增】轻量规则路径：直接解析自然语言答案（如“周杰伦”）
-    """
     if not llm_answer or llm_answer.strip().lower() in {"未知", "unknown", ""}:
         return []
 
@@ -152,7 +186,7 @@ def extract_triples_from_llm_answer(llm_answer: str, question: str = "") -> List
                 head = item.get("head", "").replace("《", "").replace("》", "").strip()
                 rel = item.get("relation", "").strip()
                 tail = item.get("tail", "").strip()
-                # 验证实体是否在 KG 中（可选，提升准确性）
+                # 验证实体是否在 KG 中（提升准确性，防幻觉）
                 if (head in extractor.songs or head in extractor.albums) and tail in extractor.persons:
                     if rel in {"歌手", "作词", "作曲"}:
                         triples.append((head, rel, tail))
@@ -161,43 +195,45 @@ def extract_triples_from_llm_answer(llm_answer: str, question: str = "") -> List
     except Exception as e:
         print(f"[LLM EXTRACTION FAILED] {e}. Trying fallback...")
 
-    # === 第二步：LLM 失败 → 启用规则方法（你的 RELATION_KEYWORDS + KG 实体）===
-    print("[INFO] Fallback to regex-based extraction with relation keywords.")
-
-    # 【新增】先尝试轻量规则抽取（解决“周杰伦”类纯答案）
+    # === 第二步：LLM 失败 → 启用轻量规则抽取 ===
+    print("[INFO] Fallback to lightweight extraction.")
     light_triples = _lightweight_extraction(llm_answer, question, extractor)
     if light_triples:
         return light_triples
 
-    # 再走原有 fallback
+    # === 第三步：再走关键词兜底 ===
+    print("[INFO] Fallback to regex-based extraction.")
     return _fallback_regex_extraction(llm_answer, extractor)
 
 
+# ==============================================================================
+# 🪝 函数：_lightweight_extraction —— 轻量规则抽取（针对短答案优化）
+# 作用：当 LLM 直接回答“方文山”时，结合问题上下文构造三元组。
+# 流程：
+#   1. 从 question 提取歌曲名（使用 handler.py 中的统一逻辑）
+#   2. 从 llm_answer 提取干净人名（去括号、去前缀、去尾标点）
+#   3. 构造 (song, relation, person)
+# 优势：速度快、准确率高，适用于简单问答。
+# ==============================================================================
 def _lightweight_extraction(text: str, question: str, extractor: MusicEntityExtractor) -> List[Tuple[str, str, str]]:
-    from handler import get_relation_type_from_question
+    from handler import get_relation_type_from_question, extract_head_entity  # ← 关键：统一 head 提取
 
     rel = get_relation_type_from_question(question)
     if not rel:
         return []
 
-    song = ""
-    match = re.search(r'《([^》]+)》', question)
-    if match:
-        song = match.group(1).strip()
-    else:
-        # 更通用的歌曲提取
-        song_match = re.search(r'(?:歌曲|作品)?\s*([^\s的]+)\s*(?:的|之)', question)
-        if song_match:
-            song = song_match.group(1).strip()
-
-    if not song:
+    # ✅ 使用与 query_handler 完全一致的 head 提取方式！
+    song = extract_head_entity(question)
+    if not song or song not in extractor.songs:
         return []
 
     clean_ans = text.strip()
     clean_ans = re.sub(r'\*+', '', clean_ans)
     clean_ans = re.split(r'[。！？\n]', clean_ans)[0].strip()
 
-    # === 关键修复：支持关系词变体 ===
+    # 清理尾部标点、括号、空格
+    clean_tail = re.sub(r'[。！？，,.\s】）\)\]]+$', '', clean_ans).strip()
+
     REL_VARIANTS = {
         "作词": ["作词", "作词人", "词作者", "填词人", "填词"],
         "作曲": ["作曲", "作曲人", "曲作者", "谱曲人", "谱曲"],
@@ -206,58 +242,51 @@ def _lightweight_extraction(text: str, question: str, extractor: MusicEntityExtr
     variants = REL_VARIANTS.get(rel, [rel])
 
     # 短答案直接返回（如果在 KG 中）
-    if len(clean_ans) <= 20 and not any(
-            w in clean_ans for w in ["不知道", "不确定", "可能", "需要", "嗯", "好的", "用户"]) \
-            and song not in clean_ans and not any(v in clean_ans for v in variants):
-        if clean_ans in extractor.persons:
-            return [(song, rel, clean_ans)]
+    if len(clean_tail) <= 20 and not any(
+            w in clean_tail for w in ["不知道", "不确定", "可能", "需要", "嗯", "好的", "用户"]) \
+            and song not in clean_tail and not any(v in clean_tail for v in variants):
+        if clean_tail in extractor.persons:
+            return [(song, rel, clean_tail)]
 
     # 构建正则 patterns
     patterns = []
     for v in variants:
-        # 模式1: 《青花瓷》的作词人是 XXX
         patterns.append(r'《?{}》?\s*的\s*{}(?:是|为)?\s*([^\s。，；！？、,，]+)'.format(re.escape(song), re.escape(v)))
-        # 模式2: 作词人是 XXX
         patterns.append(r'{}(?:是|为)?\s*([^\s。，；！？、,，]+)'.format(re.escape(v)))
-
     patterns.append(r'答案[：:]\s*([^\s。，；！？、,，]+)')
 
     for pattern in patterns:
         match = re.search(pattern, clean_ans)
         if match:
             tail = match.group(1).strip()
-            # 只取第一个词（防“陈奕迅（周杰伦）”之类）
             tail = re.split(r'[（\(【\s]', tail)[0].strip()
-            if tail and len(tail) >= 2:
+            tail = re.sub(r'[。！？，,.\s】）\)\]]+$', '', tail).strip()
+            if tail and len(tail) >= 2 and tail in extractor.persons:
                 return [(song, rel, tail)]
-
     return []
 
 
+# ==============================================================================
+# 🛟 函数：_fallback_regex_extraction —— 关键词规则兜底抽取
+# 作用：当 LLM 和轻量规则都失败时，用关键词触发关系，结合 KG 实体匹配。
+# 策略：
+#   - head 必须来自 KG（确保主体正确）
+#   - tail **只使用 KG 中出现过的人物**（不再猜测！）
+#   - 每种关系只取第一个合理 tail
+# 定位：最后防线，保证系统不崩溃。
+# ==============================================================================
 def _fallback_regex_extraction(text: str, extractor: MusicEntityExtractor) -> List[Tuple[str, str, str]]:
-    """
-    备用方案：基于关系关键词进行规则抽取。
-    - head（歌曲）必须来自 KG（确保主体正确）
-    - tail（人物）可以从文本中提取任意合理候选（允许错误，供后续 KG 验证）
-    """
-    # 1. 提取歌曲（必须来自 KG）
     entities = extractor.extract_entities(text)
     songs = entities["songs"]
     if not songs:
         return []
 
-    # 优先使用 KG 中的人物
+    # ✅ 关键修复：只使用 KG 中存在的人物，拒绝乱猜！
     persons_in_text = [p for p in extractor.persons if p in text]
-    if persons_in_text:
-        candidate_tails = persons_in_text
-    else:
-        # 否则用保守正则（只取2~5字中文，且不在黑名单）
-        raw_candidates = re.findall(r'[\u4e00-\u9fa5]{2,5}', text)
-        blacklist = {"作词人", "作曲人", "演唱者", "是谁", "答案", "歌曲", "专辑"}
-        candidate_tails = [c for c in raw_candidates if c not in blacklist]
-    if not candidate_tails:
-        return []
+    if not persons_in_text:
+        return []  # 如果没提到任何 KG 人物，直接放弃
 
+    candidate_tails = persons_in_text
     triples = []
     cleaned_text = text.replace("《", "").replace("》", "")
 
@@ -266,17 +295,20 @@ def _fallback_regex_extraction(text: str, extractor: MusicEntityExtractor) -> Li
             for kw in keywords:
                 pattern = kw if kw.startswith("由") else re.escape(kw)
                 if re.search(pattern, cleaned_text, re.IGNORECASE):
-                    # 找到第一个合理的 tail（排除 song 自身）
                     for tail in candidate_tails:
                         if tail == song:
                             continue
                         triples.append((song, rel_type, tail))
-                        break  # 每种关系只取一个最可能的
-                    break  # 找到关键词就跳出
+                        break
+                    break
     return triples
 
 
-# 全局单例实例
+# ==============================================================================
+# 🧾 函数：get_entity_extractor —— 单例模式获取实体抽取器
+# 作用：全局只加载一次 KG 实体，避免重复连接数据库。
+# 返回：MusicEntityExtractor 实例
+# ==============================================================================
 _extractor_instance = None
 
 

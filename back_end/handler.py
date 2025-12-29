@@ -9,7 +9,11 @@ patterns = [
     '专辑(.+)包含的歌曲是',
     '(.+)演唱的歌曲有',
     '(.+)作词的歌曲有',
-    '(.+)合作过的人有'
+    '(.+)合作过的人有',
+    '(.+)是谁唱的',  # New
+    '(.+)是哪个专辑的', # New
+    '谁唱的(.+)', # New
+    '谁作词的(.+)', # New
 ]
 
 queries = [
@@ -19,7 +23,11 @@ queries = [
     "MATCH (a:专辑{name:$val})<-[:所属专辑]-(b:作品) RETURN b.name AS name",
     "MATCH (a:人物{name:$val})<-[:歌手]-(b:作品) RETURN b.name AS name LIMIT 10",
     "MATCH (a:人物{name:$val})<-[:作词]-(b:作品) RETURN b.name AS name LIMIT 10",
-    "MATCH (a:人物{name:$val})-[:合作]->(b:人物) RETURN b.name AS name LIMIT 10"
+    "MATCH (a:人物{name:$val})-[:合作]->(b:人物) RETURN b.name AS name LIMIT 10",
+    "MATCH (a:作品{name:$val})-[:歌手]->(b:人物) RETURN b.name AS name LIMIT 1", # Mapped to (.+)是谁唱的
+    "MATCH (a:作品{name:$val})-[:所属专辑]->(b:专辑) RETURN b.name AS name LIMIT 1", # Mapped to (.+)是哪个专辑的
+    "MATCH (a:作品{name:$val})-[:歌手]->(b:人物) RETURN b.name AS name LIMIT 1", # Mapped to 谁唱的(.+)
+    "MATCH (a:作品{name:$val})-[:作词]->(b:人物) RETURN b.name AS name LIMIT 1", # Mapped to 谁作词的(.+)
 ]
 
 
