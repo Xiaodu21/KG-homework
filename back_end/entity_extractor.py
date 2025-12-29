@@ -128,24 +128,19 @@ def extract_triples_from_llm_answer(llm_answer: str, question: str = "") -> List
     extractor = get_entity_extractor()
 
     # === 第一步：尝试用 LLM 抽取（主路径）===
-    extraction_prompt = f"""Task: Extract singer, lyricist, composer relations.
+    extraction_prompt = f"""Extract triples (Entity | Relation | Entity) from text.
 Relations: 歌手, 作词, 作曲.
-Output format: Entity1 | Relation | Entity2
 
-Example 1:
 Text: 《青花瓷》由周杰伦演唱，方文山作词。
 Output:
 青花瓷 | 歌手 | 周杰伦
 青花瓷 | 作词 | 方文山
 
-Example 2:
 Text: 七里香是周杰伦唱的。
 Output:
 七里香 | 歌手 | 周杰伦
 
-Text:
-{llm_answer}
-
+Text: {llm_answer}
 Output:
 """
 
