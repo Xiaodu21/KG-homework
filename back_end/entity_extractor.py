@@ -128,15 +128,16 @@ def extract_triples_from_llm_answer(llm_answer: str, question: str = "") -> List
     extractor = get_entity_extractor()
 
     # === 第一步：尝试用 LLM 抽取（主路径）===
-    extraction_prompt = f"""你是一个专业的信息抽取系统。请从以下文本中：
-1. 识别【歌曲】和【人物】实体；
-2. 判断它们之间的关系，关系类型只能是：歌手、作词、作曲；
-3. 输出严格为 JSON 列表，格式：[{{"head":"歌曲","relation":"关系","tail":"人物"}}]
+    extraction_prompt = f"""任务：从文本中提取音乐领域的三元组。
+关系类型仅限：歌手、作词、作曲。
+
+格式要求：每行一个三元组，格式为 "实体1 | 关系 | 实体2"。不要输出任何其他内容。
 
 示例：
 文本：《青花瓷》由周杰伦演唱，方文山作词。
 输出：
-[{{"head": "青花瓷", "relation": "歌手", "tail": "周杰伦"}}, {{"head": "青花瓷", "relation": "作词", "tail": "方文山"}}]
+青花瓷 | 歌手 | 周杰伦
+青花瓷 | 作词 | 方文山
 
 文本：{llm_answer}
 输出：
@@ -144,22 +145,22 @@ def extract_triples_from_llm_answer(llm_answer: str, question: str = "") -> List
 
     raw_output = _call_llm_for_extraction(extraction_prompt)
     triples = []
-    try:
-        json_match = re.search(r'(\[.*\])', raw_output, re.DOTALL)
-        if json_match:
-            data = json.loads(json_match.group(1))
-            for item in data:
-                head = item.get("head", "").replace("《", "").replace("》", "").strip()
-                rel = item.get("relation", "").strip()
-                tail = item.get("tail", "").strip()
-                # 验证实体是否在 KG 中（可选，提升准确性）
-                if (head in extractor.songs or head in extractor.albums) and tail in extractor.persons:
-                    if rel in {"歌手", "作词", "作曲"}:
-                        triples.append((head, rel, tail))
-        if triples:
-            return triples
-    except Exception as e:
-        print(f"[LLM EXTRACTION FAILED] {e}. Trying fallback...")
+    
+    # 解析 Line-based output
+    for line in raw_output.split('\n'):
+        parts = [p.strip() for p in line.split('|')]
+        if len(parts) == 3:
+            h, r, t = parts
+            # 清理书名号
+            h = h.replace("《", "").replace("》", "")
+            t = t.replace("《", "").replace("》", "")
+            if r in {"歌手", "作词", "作曲"}:
+                triples.append((h, r, t))
+    
+    if triples:
+        return triples
+
+    print(f"[LLM EXTRACTION FAILED OR EMPTY] Raw: {raw_output}. Trying fallback...")
 
     # === 第二步：LLM 失败 → 启用规则方法（你的 RELATION_KEYWORDS + KG 实体）===
     print("[INFO] Fallback to regex-based extraction with relation keywords.")

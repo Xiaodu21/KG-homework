@@ -22,33 +22,42 @@ def call_llm(question: str) -> str:
         )
         output = result.stdout.strip()
 
-        # === 关键修复：不再取第一行，而是取最后一行非空行 ===
-        lines = [line.strip() for line in output.split('\n') if line.strip()]
-
-        # 移除 Ollama 的 Thinking... 和 done thinking 行
-        cleaned_lines = []
-        for line in lines:
-            if line.startswith("Thinking...") or "...done thinking" in line:
-                continue
-            cleaned_lines.append(line)
-
-        # 取最后一行作为答案
-        if cleaned_lines:
-            answer_line = cleaned_lines[-1]
-        else:
-            return "未知"
-
-        # 清理可能的 markdown（如 **周杰伦**）
-        answer_line = re.sub(r'\*+', '', answer_line)
-        # 去掉句号、多余文字，只保留核心
-        answer_line = answer_line.split('。')[0].split('！')[0].split('？')[0].strip()
-
-        # 如果答案太长（像解释），或者包含“不知道”等词，视为无效
-        if len(answer_line) > 30 or any(w in answer_line for w in ["不知道", "不确定", "可能", "需要确认"]):
-            return "未知"
-
-        return answer_line if answer_line else "未知"
+        # === 关键修复：使用更健壮的解析逻辑 ===
+        return parse_llm_answer(output)
 
     except Exception as e:
         print(f"【LLM ERROR】{e}")
         return "未知"
+
+
+def parse_llm_answer(text: str) -> str:
+    """
+    Parses the final answer from the LLM output.
+    """
+    lines = [line.strip() for line in text.split('\n') if line.strip()]
+    cleaned_lines = []
+    for line in lines:
+        if line.startswith("Thinking...") or "...done thinking" in line:
+            continue
+        cleaned_lines.append(line)
+
+    if not cleaned_lines:
+        return "未知"
+
+    # Strategy: Combine lines unless it looks like a thinking chain that wasn't caught.
+    # Simple heuristic: Just join them for now, or take the last sentence if it looks definitive.
+    # The previous logic took the LAST line. Let's try to be smarter.
+    # If the last line is short (< 50 chars), it might be the answer.
+    # If it's long, the whole thing might be the answer.
+    
+    # For now, let's join all lines to avoid missing context, 
+    # but maybe strip leading "Answer:" or "回答：" labels.
+    full_text = " ".join(cleaned_lines)
+    
+    # Clean up common prefixes
+    full_text = re.sub(r'^(答案|回答|Answer)[:：]\s*', '', full_text, flags=re.IGNORECASE)
+    
+    # Clean markdown
+    full_text = re.sub(r'\*+', '', full_text)
+    
+    return full_text
