@@ -15,7 +15,7 @@ def call_llm(question: str) -> str:
 
     try:
         result = subprocess.run(
-            ["ollama", "run", "qwen3:1.7b", full_prompt],
+            ["ollama", "run", "qwen2.5:1.5b", full_prompt],
             capture_output=True,
             text=True,
             timeout=90,

@@ -117,6 +117,59 @@ RELATION_KEYWORDS = {
     "作曲": ["作曲", "谱曲", "曲作者", "作曲人", "谁作曲"]
 }
 
+ALLOWED_RELATIONS = {"歌手", "作词", "作曲"}
+
+
+def _normalize_entity(text: str) -> str:
+    if not text:
+        return ""
+    return text.replace("《", "").replace("》", "").strip()
+
+
+def _clean_tail_candidate(tail: str) -> str:
+    if not tail:
+        return ""
+    cleaned = _normalize_entity(tail)
+    cleaned = re.sub(r"[A-Za-z0-9]+", "", cleaned)
+    for sep in ["是", "为", "由"]:
+        if sep in cleaned:
+            cleaned = cleaned.split(sep)[-1]
+    if "成员" in cleaned:
+        cleaned = cleaned.split("成员")[-1]
+    cleaned = cleaned.lstrip("的")
+    for suffix in ["演唱者", "演唱", "主唱", "歌手"]:
+        if cleaned.endswith(suffix):
+            cleaned = cleaned[: -len(suffix)]
+    return cleaned.strip()
+
+
+def _is_valid_tail(tail: str, extractor: MusicEntityExtractor, allow_ungrounded: bool) -> bool:
+    if not tail:
+        return False
+    if not allow_ungrounded:
+        return tail in extractor.persons
+    if tail in extractor.persons:
+        return True
+    if len(tail) < 2 or len(tail) > 20:
+        return False
+    if re.search(r"[0-9A-Za-z]", tail):
+        return False
+    if any(bad in tail for bad in ["不知道", "不确定", "可能", "需要", "答案", "用户", "歌曲", "专辑", "演唱", "韩国", "中国", "日本", "美国", "男子", "女子", "组合", "成员"]):
+        return False
+    return True
+
+
+def _extract_ungrounded_person_candidates(text: str, extractor: MusicEntityExtractor) -> List[str]:
+    candidates = []
+    for match in re.finditer(r"[\u4e00-\u9fff]{2,6}", text):
+        candidate = _clean_tail_candidate(match.group(0))
+        if candidate in extractor.songs or candidate in extractor.albums:
+            continue
+        if _is_valid_tail(candidate, extractor, allow_ungrounded=True):
+            if candidate not in candidates:
+                candidates.append(candidate)
+    return candidates
+
 
 # ==============================================================================
 # 🤖 函数：_call_llm_for_extraction —— 调用 LLM 执行结构化信息抽取
@@ -129,7 +182,7 @@ def _call_llm_for_extraction(prompt: str) -> str:
     """内部函数：调用 LLM 执行抽取"""
     try:
         result = subprocess.run(
-            ["ollama", "run", "qwen3:1.7b", prompt],
+            ["ollama", "run", "qwen2.5:1.5b", prompt],
             capture_output=True,
             text=True,
             timeout=60,
@@ -155,11 +208,19 @@ def _call_llm_for_extraction(prompt: str) -> str:
 # 输入：llm_answer（LLM 回答文本），question（原始问题，用于上下文）
 # 输出：三元组列表，如 [("青花瓷", "作词", "方文山")]
 # ==============================================================================
-def extract_triples_from_llm_answer(llm_answer: str, question: str = "") -> List[Tuple[str, str, str]]:
+def extract_triples_from_llm_answer(
+    llm_answer: str,
+    question: str = "",
+    allow_ungrounded: bool = False
+) -> List[Tuple[str, str, str]]:
     if not llm_answer or llm_answer.strip().lower() in {"未知", "unknown", ""}:
         return []
 
     extractor = get_entity_extractor()
+    forced_head = ""
+    if allow_ungrounded and question:
+        from handler import extract_head_entity
+        forced_head = extract_head_entity(question)
 
     # === 第一步：尝试用 LLM 抽取（主路径）===
     extraction_prompt = f"""你是一个专业的信息抽取系统。请从以下文本中：
@@ -183,12 +244,18 @@ def extract_triples_from_llm_answer(llm_answer: str, question: str = "") -> List
         if json_match:
             data = json.loads(json_match.group(1))
             for item in data:
-                head = item.get("head", "").replace("《", "").replace("》", "").strip()
+                head = _normalize_entity(item.get("head", ""))
                 rel = item.get("relation", "").strip()
-                tail = item.get("tail", "").strip()
-                # 验证实体是否在 KG 中（提升准确性，防幻觉）
-                if (head in extractor.songs or head in extractor.albums) and tail in extractor.persons:
-                    if rel in {"歌手", "作词", "作曲"}:
+                tail = _normalize_entity(item.get("tail", ""))
+                if allow_ungrounded:
+                    tail = _clean_tail_candidate(tail)
+                if allow_ungrounded and not head and forced_head:
+                    head = forced_head
+                if rel in ALLOWED_RELATIONS:
+                    if allow_ungrounded:
+                        if head and _is_valid_tail(tail, extractor, allow_ungrounded=True):
+                            triples.append((head, rel, tail))
+                    elif (head in extractor.songs or head in extractor.albums) and tail in extractor.persons:
                         triples.append((head, rel, tail))
         if triples:
             return triples
@@ -197,13 +264,22 @@ def extract_triples_from_llm_answer(llm_answer: str, question: str = "") -> List
 
     # === 第二步：LLM 失败 → 启用轻量规则抽取 ===
     print("[INFO] Fallback to lightweight extraction.")
-    light_triples = _lightweight_extraction(llm_answer, question, extractor)
+    light_triples = _lightweight_extraction(
+        llm_answer,
+        question,
+        extractor,
+        allow_ungrounded=allow_ungrounded
+    )
     if light_triples:
         return light_triples
 
     # === 第三步：再走关键词兜底 ===
     print("[INFO] Fallback to regex-based extraction.")
-    return _fallback_regex_extraction(llm_answer, extractor)
+    return _fallback_regex_extraction(
+        llm_answer,
+        extractor,
+        allow_ungrounded=allow_ungrounded
+    )
 
 
 # ==============================================================================
@@ -215,7 +291,12 @@ def extract_triples_from_llm_answer(llm_answer: str, question: str = "") -> List
 #   3. 构造 (song, relation, person)
 # 优势：速度快、准确率高，适用于简单问答。
 # ==============================================================================
-def _lightweight_extraction(text: str, question: str, extractor: MusicEntityExtractor) -> List[Tuple[str, str, str]]:
+def _lightweight_extraction(
+    text: str,
+    question: str,
+    extractor: MusicEntityExtractor,
+    allow_ungrounded: bool = False
+) -> List[Tuple[str, str, str]]:
     from handler import get_relation_type_from_question, extract_head_entity  # ← 关键：统一 head 提取
 
     rel = get_relation_type_from_question(question)
@@ -233,6 +314,8 @@ def _lightweight_extraction(text: str, question: str, extractor: MusicEntityExtr
 
     # 清理尾部标点、括号、空格
     clean_tail = re.sub(r'[。！？，,.\s】）\)\]]+$', '', clean_ans).strip()
+    if allow_ungrounded:
+        clean_tail = _clean_tail_candidate(clean_tail)
 
     REL_VARIANTS = {
         "作词": ["作词", "作词人", "词作者", "填词人", "填词"],
@@ -245,7 +328,7 @@ def _lightweight_extraction(text: str, question: str, extractor: MusicEntityExtr
     if len(clean_tail) <= 20 and not any(
             w in clean_tail for w in ["不知道", "不确定", "可能", "需要", "嗯", "好的", "用户"]) \
             and song not in clean_tail and not any(v in clean_tail for v in variants):
-        if clean_tail in extractor.persons:
+        if _is_valid_tail(clean_tail, extractor, allow_ungrounded):
             return [(song, rel, clean_tail)]
 
     # 构建正则 patterns
@@ -261,7 +344,9 @@ def _lightweight_extraction(text: str, question: str, extractor: MusicEntityExtr
             tail = match.group(1).strip()
             tail = re.split(r'[（\(【\s]', tail)[0].strip()
             tail = re.sub(r'[。！？，,.\s】）\)\]]+$', '', tail).strip()
-            if tail and len(tail) >= 2 and tail in extractor.persons:
+            if allow_ungrounded:
+                tail = _clean_tail_candidate(tail)
+            if _is_valid_tail(tail, extractor, allow_ungrounded):
                 return [(song, rel, tail)]
     return []
 
@@ -275,7 +360,11 @@ def _lightweight_extraction(text: str, question: str, extractor: MusicEntityExtr
 #   - 每种关系只取第一个合理 tail
 # 定位：最后防线，保证系统不崩溃。
 # ==============================================================================
-def _fallback_regex_extraction(text: str, extractor: MusicEntityExtractor) -> List[Tuple[str, str, str]]:
+def _fallback_regex_extraction(
+    text: str,
+    extractor: MusicEntityExtractor,
+    allow_ungrounded: bool = False
+) -> List[Tuple[str, str, str]]:
     entities = extractor.extract_entities(text)
     songs = entities["songs"]
     if not songs:
@@ -283,12 +372,17 @@ def _fallback_regex_extraction(text: str, extractor: MusicEntityExtractor) -> Li
 
     # ✅ 关键修复：只使用 KG 中存在的人物，拒绝乱猜！
     persons_in_text = [p for p in extractor.persons if p in text]
-    if not persons_in_text:
+    if not persons_in_text and not allow_ungrounded:
         return []  # 如果没提到任何 KG 人物，直接放弃
 
-    candidate_tails = persons_in_text
+    if persons_in_text:
+        candidate_tails = persons_in_text
+    else:
+        candidate_tails = _extract_ungrounded_person_candidates(text, extractor)
+        if not candidate_tails:
+            return []
     triples = []
-    cleaned_text = text.replace("《", "").replace("》", "")
+    cleaned_text = _normalize_entity(text)
 
     for song in songs:
         for rel_type, keywords in RELATION_KEYWORDS.items():
