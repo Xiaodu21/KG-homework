@@ -9,7 +9,7 @@ from neo4j import GraphDatabase
 
 NEO4J_URI = "bolt://localhost:7687"
 NEO4J_USERNAME = "neo4j"
-NEO4J_PASSWORD = "Aqweasd123."  # ← 改这里
+NEO4J_PASSWORD = "Song0714."  # ← 改这里
 
 
 # 建立数据库的连接

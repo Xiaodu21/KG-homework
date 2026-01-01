@@ -11,7 +11,11 @@ def two_stage_qa(question: str):
     print(f"【阶段1 - LLM原始回答】: {llm_ans}")
 
     # ========== 阶段2：从 LLM 回答中抽取三元组 ==========
-    llm_triples = extract_triples_from_llm_answer(llm_ans, question)
+    llm_triples = extract_triples_from_llm_answer(
+        llm_ans,
+        question,
+        allow_ungrounded=True
+    )
     print(f"【阶段2 - 抽取三元组】: {llm_triples}")
 
     # ========== 阶段3：查询知识库 ==========
